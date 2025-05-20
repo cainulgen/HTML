@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Top‑Down Arcade Racer</title>
+  <style>
+    /* --- Basic reset & layout --- */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #111; }
+    canvas { display: block; width: 100%; height: 100%; background: #202020; }
+    #hud {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      text-shadow: 0 0 3px #000;
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud"></div>
+
+  <script>
+  (() => {
+    /* ---------------- Canvas setup ---------------- */
+    const canvas = document.getElementById('game');
+    const ctx     = canvas.getContext('2d', { alpha: false });
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    /* ---------------- Input handling ---------------- */
+    const keys = { w: false, a: false, s: false, d: false };
+    const map  = { w: 'w', a: 'a', s: 's', d: 'd', ArrowUp: 'w', ArrowLeft: 'a', ArrowDown: 's', ArrowRight: 'd' };
+
+    window.addEventListener('keydown', e => {
+      const k = map[e.key];
+      if (k) keys[k] = true;
+    });
+    window.addEventListener('keyup', e => {
+      const k = map[e.key];
+      if (k) keys[k] = false;
+    });
+
+    /* ---------------- Helper ---------------- */
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    /* ---------------- Car class ---------------- */
+    class Car {
+      constructor() {
+        this.x        = 0;
+        this.y        = 0;
+        this.angle    = 0;           // radians, 0 = facing up
+        this.speed    = 0;
+        this.width    = 40;
+        this.length   = 80;
+        this.accel    = 0.35;
+        this.maxSpeed = 14;
+        this.friction = 0.05;
+        this.turn     = 0.045;
+      }
+      update() {
+        /* acceleration & braking */
+        if (keys.w)  this.speed += this.accel;
+        if (keys.s)  this.speed -= this.accel * 0.7;
+
+        /* clamp speed */
+        this.speed = Math.max(Math.min(this.speed,  this.maxSpeed), -this.maxSpeed * 0.4);
+
+        /* natural friction */
+        if (!keys.w && !keys.s) {
+          if (this.speed >  0) this.speed = Math.max(0, this.speed - this.friction);
+          if (this.speed <  0) this.speed = Math.min(0, this.speed + this.friction);
+        }
+
+        /* steering – only if we're moving */
+        if (Math.abs(this.speed) > 0.2) {
+          const steerFactor = (this.speed / this.maxSpeed);
+          if (keys.a) this.angle -= this.turn * steerFactor;
+          if (keys.d) this.angle += this.turn * steerFactor;
+        }
+
+        /* translate position */
+        this.x += Math.sin(this.angle) * this.speed;
+        this.y -= Math.cos(this.angle) * this.speed;
+      }
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        ctx.fillStyle = '#d22';
+        ctx.fillRect(-this.width/2, -this.length/2, this.width, this.length);
+
+        /* simple windshield */
+        ctx.fillStyle = '#111';
+        ctx.fillRect(-this.width/2 + 6, -this.length/2 + 8, this.width - 12, 14);
+
+        ctx.restore();
+      }
+    }
+
+    /* ---------------- World & camera ---------------- */
+    const car   = new Car();
+    let camX    = car.x;
+    let camY    = car.y;
+
+    function drawGround() {
+      const tile = 100;
+      const halfW = canvas.width  / 2;
+      const halfH = canvas.height / 2;
+
+      const startX = Math.floor((camX - halfW) / tile) - 2;
+      const endX   = Math.floor((camX + halfW) / tile) + 2;
+      const startY = Math.floor((camY - halfH) / tile) - 2;
+      const endY   = Math.floor((camY + halfH) / tile) + 2;
+
+      // base asphalt tiles
+      ctx.fillStyle = '#2b2b2b';
+      for (let x = startX; x <= endX; x++) {
+        for (let y = startY; y <= endY; y++) {
+          ctx.fillRect(x * tile, y * tile, tile - 1, tile - 1);
+        }
+      }
+
+      // faint grid lines to accentuate speed
+      ctx.strokeStyle = '#353535';
+      ctx.lineWidth   = 2;
+      ctx.setLineDash([10, 10]);
+      ctx.beginPath();
+      for (let x = startX; x <= endX; x++) {
+        ctx.moveTo(x * tile, startY * tile);
+        ctx.lineTo(x * tile, endY   * tile);
+      }
+      for (let y = startY; y <= endY; y++) {
+        ctx.moveTo(startX * tile, y * tile);
+        ctx.lineTo(endX   * tile, y * tile);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    /* ---------------- Main loop ---------------- */
+    const hud = document.getElementById('hud');
+    let lastTime = performance.now();
+
+    function frame(time) {
+      const dt = (time - lastTime) / 1000; // not used but handy if you expand
+      lastTime = time;
+
+      car.update();
+      camX = lerp(camX, car.x, 0.1);
+      camY = lerp(camY, car.y, 0.1);
+
+      /* ----- Clear screen ----- */
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // reset any existing transform
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      /* ----- World transform ----- */
+      ctx.save();
+      ctx.translate(canvas.width / 2 - camX, canvas.height / 2 - camY);
+
+      drawGround();
+      car.draw();
+
+      ctx.restore();
+
+      hud.textContent = `Speed: ${Math.abs(car.speed).toFixed(1)} u/s`;
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>
